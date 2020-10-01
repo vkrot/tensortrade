@@ -12,7 +12,8 @@ class LoggingCallback(EpisodeCallback):
         self.host = host
         self.plotly_renderer = plotly_renderer
         self._fig = None
-        threading.Thread(target=self.update, args=()).start()
+        thr = threading.Thread(target=self.update, args=(), daemon=True)
+        thr.start()
 
     def update(self):
         while True:
