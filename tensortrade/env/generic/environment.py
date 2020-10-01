@@ -27,7 +27,8 @@ from tensortrade.env.generic import (
     Observer,
     Stopper,
     Informer,
-    Renderer
+    Renderer,
+    EpisodeCallback
 )
 
 
@@ -64,6 +65,7 @@ class TradingEnv(gym.Env, TimeIndexed):
                  stopper: Stopper,
                  informer: Informer,
                  renderer: Renderer,
+                 callback: EpisodeCallback,
                  **kwargs) -> None:
         super().__init__()
         self.clock = Clock()
@@ -74,6 +76,7 @@ class TradingEnv(gym.Env, TimeIndexed):
         self.stopper = stopper
         self.informer = informer
         self.renderer = renderer
+        self.callback = callback
 
         for c in self.components.values():
             c.clock = self.clock
@@ -126,6 +129,9 @@ class TradingEnv(gym.Env, TimeIndexed):
         info = self.informer.info(self)
 
         self.clock.increment()
+
+        if done and self.callback:
+            self.callback.on_done(self)
 
         return obs, reward, done, info
 

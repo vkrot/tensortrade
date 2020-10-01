@@ -505,9 +505,9 @@ class PlotlyTradingChart(BaseRenderer):
         if not self.fig:
             self._create_figure(performance.keys())
 
-        if self._show_chart:  # ensure chart visibility through notebook cell reruns
-            display(self.fig)
-            self._show_chart = False
+        # if self._show_chart:  # ensure chart visibility through notebook cell reruns
+        #     display(self.fig)
+        #     self._show_chart = False
 
         self.fig.layout.title = self._create_log_entry(episode, max_episodes, step, max_steps)
         self._price_chart.update(dict(
@@ -525,7 +525,7 @@ class PlotlyTradingChart(BaseRenderer):
 
         self._net_worth_chart.update({'y': net_worth})
 
-        self.fig.show()
+        # self.fig.show()
 
 
     def save(self) -> None:

@@ -18,5 +18,6 @@ from tensortrade.env.generic.components.observer import Observer
 from tensortrade.env.generic.components.stopper import Stopper
 from tensortrade.env.generic.components.informer import Informer
 from tensortrade.env.generic.components.renderer import Renderer
+from tensortrade.env.generic.components.episod_callback import EpisodeCallback
 
 from tensortrade.env.generic.environment import TradingEnv

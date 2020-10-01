@@ -10,6 +10,16 @@ import random
 import time
 import plotly
 
+###
+# ubuntu run
+# apt-get update
+# apt-get install python3-pip
+# python3 -m pip install dash
+# git clone https://github.com/vkrot/tensortrade/
+# cd tensortrade/tensortrade/vkrot
+# python3 dash-server.py
+# nohup python3 dash-server.py &
+
 class FigureHolder():
     def __init__(self):
         self._figure = None
