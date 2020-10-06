@@ -84,7 +84,7 @@ class PBR(TensorTradeRewardScheme):
 
     registered_name = "pbr"
 
-    def __init__(self, rsi: Stream):
+    def __init__(self, rsi: Stream, rsi_diff: Stream):
         super().__init__()
         self.position = -1
 
@@ -96,6 +96,7 @@ class PBR(TensorTradeRewardScheme):
         # self.feed = DataFeed([reward])
         # self.feed.compile()
         self.rsi = rsi
+        self.rsi_diff = rsi_diff
 
     def on_action(self, action: int):
         self.position = -1 if action == 0 else 1
@@ -105,13 +106,21 @@ class PBR(TensorTradeRewardScheme):
         # print(f'rsi: {self.rsi.value} positition: {self.position}')
 
         r = self.rsi.value
+        rd = self.rsi_diff.value
         if np.isnan(r):
             return 0
 
-        if r < 0.3:
-            return self.position * -1
+        if rd > 0:
+            # buy low rsi values
+            return self.position * -1 * (1 - r)
         else:
-            return self.position
+            # sell high rsi values
+            return self.position * r
+
+        # if r < 0.3:
+        #     return self.position * -1
+        # else:
+        #     return self.position
 
     def reset(self):
         self.position = -1
@@ -136,10 +145,12 @@ def build_env(config):
     #     cp
     # ]
 
-    rsi = talib.RSI(data['close'], 14)
-    rsi = rsi / 100
-    rsi = Stream.source(rsi, "float").rename("rsi")
-    features = [rsi]
+    rsi_indicator = talib.RSI(data['close'], 14)
+    rsi_indicator = rsi_indicator / 100
+    rsi: Stream = Stream.source(rsi_indicator, "float").rename("rsi")
+    rsi_diff = rsi.diff().rename("rsi_diff")
+
+    features = [rsi, rsi_diff]
 
     feed = DataFeed(features)
     feed.compile()
@@ -166,7 +177,7 @@ def build_env(config):
     ])
 
     # reward_scheme = rewards.SimpleProfit()
-    reward_scheme = PBR(rsi=rsi)
+    reward_scheme = PBR(rsi=rsi, rsi_diff=rsi_diff)
     # reward_scheme = SimpleProfit(window_size=25)
     action_scheme = BSH(cash, asset)
     action_scheme.attach(reward_scheme)
@@ -226,7 +237,7 @@ trainer_config = {
         [int(1e6), 1e-6],
         [int(1e7), 1e-7]
     ],
-    "gamma": 0,
+    "gamma": 0.9,
     "observation_filter": "MeanStdFilter",
     "lambda": 0.72,
     "vf_loss_coeff": 0.5,
