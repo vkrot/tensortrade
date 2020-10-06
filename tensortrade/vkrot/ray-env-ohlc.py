@@ -1,7 +1,7 @@
 ### COMMAND
 
 from gym.spaces import Discrete
-
+import numpy as np
 from tensortrade.env.default.actions import TensorTradeActionScheme
 
 from tensortrade.env.generic import ActionScheme, TradingEnv
@@ -36,8 +36,87 @@ from ray.tune.integration.wandb import WandbLogger
 import ray
 from ray.rllib.agents.ppo import PPOTrainer
 import tensorflow as tf
+import talib
+from tensortrade.env.default.rewards import TensorTradeRewardScheme, SimpleProfit
 
 tf.keras.backend.set_floatx('float32')
+
+class BSH(TensorTradeActionScheme):
+
+    registered_name = "bsh"
+
+    def __init__(self, cash: 'Wallet', asset: 'Wallet'):
+        super().__init__()
+        self.cash = cash
+        self.asset = asset
+
+        self.listeners = []
+        self.action = 0
+
+    @property
+    def action_space(self):
+        return Discrete(2)
+
+    def attach(self, listener):
+        self.listeners += [listener]
+        return self
+
+    def get_orders(self, action: int, portfolio: 'Portfolio'):
+        order = None
+
+        if abs(action - self.action) > 0:
+            src = self.cash if self.action == 0 else self.asset
+            tgt = self.asset if self.action == 0 else self.cash
+            order = proportion_order(portfolio, src, tgt, 1.0)
+            self.action = action
+
+        for listener in self.listeners:
+            listener.on_action(action)
+
+        return [order]
+
+    def reset(self):
+        super().reset()
+        self.action = 0
+
+
+class PBR(TensorTradeRewardScheme):
+
+    registered_name = "pbr"
+
+    def __init__(self, rsi: Stream):
+        super().__init__()
+        self.position = -1
+
+        # r = Stream.sensor(rsi, lambda p: p.value, dtype="float").diff()
+        # position = Stream.sensor(self, lambda rs: rs.position, dtype="float")
+        #
+        # reward = (r * position).fillna(0).rename("reward")
+        #
+        # self.feed = DataFeed([reward])
+        # self.feed.compile()
+        self.rsi = rsi
+
+    def on_action(self, action: int):
+        self.position = -1 if action == 0 else 1
+
+    def get_reward(self, portfolio: 'Portfolio'):
+        # return self.feed.next()["reward"]
+        # print(f'rsi: {self.rsi.value} positition: {self.position}')
+
+        r = self.rsi.value
+        if np.isnan(r):
+            return 0
+
+        if r < 0.3:
+            return self.position * -1
+        else:
+            return self.position
+
+    def reset(self):
+        self.position = -1
+        # self.feed.reset()
+
 
 def build_env(config):
     worker_index = 1
@@ -52,11 +131,16 @@ def build_env(config):
         s = Stream.source(list(data[c]), dtype="float").rename(data[c].name)
         features += [s]
 
-    cp = Stream.select(features, lambda s: s.name == "close")
+    # cp = Stream.select(features, lambda s: s.name == "close")
+    # features =[
+    #     cp
+    # ]
 
-    features =[
-        cp
-    ]
+    rsi = talib.RSI(data['close'], 14)
+    rsi = rsi / 100
+    rsi = Stream.source(rsi, "float").rename("rsi")
+    features = [rsi]
+
     feed = DataFeed(features)
     feed.compile()
 
@@ -81,9 +165,11 @@ def build_env(config):
         Stream.source(list(data["volume"]), dtype="float").rename("volume")
     ])
 
-    reward_scheme = rewards.SimpleProfit()
-    action_scheme = actions.BSH(cash, asset)
-
+    # reward_scheme = rewards.SimpleProfit()
+    reward_scheme = PBR(rsi=rsi)
+    # reward_scheme = SimpleProfit(window_size=25)
+    action_scheme = BSH(cash, asset)
+    action_scheme.attach(reward_scheme)
 
     plotly = PlotlyTradingChart(
         display=True,
@@ -98,6 +184,7 @@ def build_env(config):
         renderer_feed=renderer_feed,
         renderer=plotly,
         window_size=20,
+        max_allowed_loss=0.5,
         callback=(LoggingCallback('http://165.227.193.153:8050', plotly) if worker_index == 1 else None)
     )
 
