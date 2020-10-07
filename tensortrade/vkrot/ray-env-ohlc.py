@@ -1,5 +1,6 @@
 ### COMMAND
 
+import pandas as pd
 from gym.spaces import Discrete
 import numpy as np
 from tensortrade.env.default.actions import TensorTradeActionScheme
@@ -126,14 +127,15 @@ class PBR(TensorTradeRewardScheme):
         self.position = -1
         # self.feed.reset()
 
+btc_usd_file = '/Users/vkrot/workspace/dumps/binance/klines/BTCUSDT.csv'
 
 def build_env(config):
     worker_index = 1
     if hasattr(config, 'worker_index'):
         worker_index = config.worker_index
 
-    cdd = CryptoDataDownload()
-    data = cdd.fetch("Coinbase", "USD", "BTC", "1h")
+    data = pd.read_csv(btc_usd_file, sep=';')
+    data['date'] = pd.to_datetime(data['time'], unit='ms')
 
     features = []
     for c in data.columns[1:]:
