@@ -21,7 +21,7 @@ class LoggingCallback(EpisodeCallback):
                 requests.post(f'{self.host}/update-fig', json=self._fig)
             except Exception as ex:
                 print(f'Error: {ex}')
-            time.sleep(1)
+            time.sleep(5)
 
     def on_done(self, env: 'TradingEnv') -> None:
         self.plotly_renderer.render(env)

@@ -41,7 +41,7 @@ class DashboardServer():
                 dcc.Graph(id='live-update-graph'),
                 dcc.Interval(
                     id='interval-component',
-                    interval=5000, # in milliseconds
+                    interval=600000, # in milliseconds, once 10 min
                     n_intervals=0
                 )
             ])

@@ -130,7 +130,7 @@ class TradingEnv(gym.Env, TimeIndexed):
 
         self.clock.increment()
 
-        if done and self.callback:
+        if (done or self.clock.step % 1000 == 0) and self.callback:
             self.callback.on_done(self)
 
         return obs, reward, done, info

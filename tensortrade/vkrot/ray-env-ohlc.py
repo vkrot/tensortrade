@@ -1,5 +1,10 @@
+btc_usd_file = '/Users/vkrot/workspace/dumps/binance/klines/BTCUSDT.csv'
+num_gpus = 0
+num_workers = 1
+
 ### COMMAND
 
+from tensortrade.oms.exchanges import ExchangeOptions
 import pandas as pd
 from gym.spaces import Discrete
 import numpy as np
@@ -42,6 +47,55 @@ from tensortrade.env.default.rewards import TensorTradeRewardScheme, SimpleProfi
 
 tf.keras.backend.set_floatx('float32')
 
+def compute_features(data):
+    close = data['close']
+    rsi_indicator = talib.RSI(data['close'], 14)
+    rsi_indicator = talib.SMA(rsi_indicator, 10)
+    rsi_indicator = rsi_indicator / 100
+
+    bbands_indicator = talib.BBANDS(close, 20, 2, 2)
+    low = bbands_indicator[2]
+    mid = bbands_indicator[1]
+    high = bbands_indicator[0]
+    width = (high - low) / mid * 100
+
+    m = mid - low
+    h = high - mid
+    c = talib.SMA(close, 10) - mid
+
+    close_in_bb = c / h
+
+    natr = talib.NATR(data['high'], data['low'], data['close'], timeperiod=14)
+
+    vol_sma = talib.SMA(data['volume'], 5)
+
+    def zscore(x, window):
+        r = x.rolling(window=window)
+        m = r.mean().shift(1)
+        s = r.std(ddof=0).shift(1)
+        z = (x - m) / s
+        return z
+
+    z = zscore(vol_sma, 60 * 24)
+    z = z / 10
+
+    df = pd.DataFrame(
+        {
+            'vol_z': z,
+            'rsi': rsi_indicator,
+            'bb_width': width,
+            'natr': natr,
+            'close_pct_change': talib.SMA(close, 10).pct_change() * 100,
+            'time': data['time']
+        }
+    )
+    for c in data.columns:
+        df[c] = data[c]
+    df = df[60 * 24 + 100:]
+
+    return df
+
+
 class BSH(TensorTradeActionScheme):
 
     registered_name = "bsh"
@@ -52,7 +106,7 @@ class BSH(TensorTradeActionScheme):
         self.asset = asset
 
         self.listeners = []
-        self.action = 0
+        self.action = 1
 
     @property
     def action_space(self):
@@ -66,10 +120,12 @@ class BSH(TensorTradeActionScheme):
         order = None
 
         if abs(action - self.action) > 0:
-            src = self.cash if self.action == 0 else self.asset
-            tgt = self.asset if self.action == 0 else self.cash
-            order = proportion_order(portfolio, src, tgt, 1.0)
-            self.action = action
+            src = self.cash if action == 0 else self.asset
+            tgt = self.asset if action == 0 else self.cash
+
+            if src.balance.free().as_float() > 0:
+                order = proportion_order(portfolio, src, tgt, 1.0)
+                self.action = action
 
         for listener in self.listeners:
             listener.on_action(action)
@@ -78,16 +134,18 @@ class BSH(TensorTradeActionScheme):
 
     def reset(self):
         super().reset()
-        self.action = 0
+        self.action = 1
 
 
 class PBR(TensorTradeRewardScheme):
 
     registered_name = "pbr"
 
-    def __init__(self, rsi: Stream, rsi_diff: Stream):
+    def __init__(self, rsi: Stream, window_size: int):
         super().__init__()
         self.position = -1
+        self._window_size = window_size
+        self.buy_rsi = 0
 
         # r = Stream.sensor(rsi, lambda p: p.value, dtype="float").diff()
         # position = Stream.sensor(self, lambda rs: rs.position, dtype="float")
@@ -97,9 +155,11 @@ class PBR(TensorTradeRewardScheme):
         # self.feed = DataFeed([reward])
         # self.feed.compile()
         self.rsi = rsi
-        self.rsi_diff = rsi_diff
 
     def on_action(self, action: int):
+        if action == 0 and self.position == 1:
+            if not np.isnan(self.rsi.value):
+                self.buy_rsi = self.rsi.value
         self.position = -1 if action == 0 else 1
 
     def get_reward(self, portfolio: 'Portfolio'):
@@ -107,57 +167,59 @@ class PBR(TensorTradeRewardScheme):
         # print(f'rsi: {self.rsi.value} positition: {self.position}')
 
         r = self.rsi.value
-        rd = self.rsi_diff.value
+        # rd = self.rsi_diff.value
         if np.isnan(r):
             return 0
 
-        if rd > 0:
-            # buy low rsi values
-            return self.position * -1 * (1 - r)
-        else:
-            # sell high rsi values
-            return self.position * r
+        # if rd > 0:
+        #     # buy low rsi values
+        #     return self.position * -1 * (1 - r)
+        # else:
+        #     # sell high rsi values
+        #     return self.position * r
+
 
         # if r < 0.3:
         #     return self.position * -1
         # else:
         #     return self.position
 
+        # SimpleProfit
+        net_worths = [nw['net_worth'] for nw in portfolio.performance.values()]
+        returns = [(b - a) / a for a, b in zip(net_worths[::1], net_worths[1::1])]
+        returns = np.array([x + 1 for x in returns[-self._window_size:]]).cumprod() -1
+        ret = 0 if len(returns) < 1 else returns[-1]
+
+        return ret
+        # prise buying at low rsi
+        # return ret * (1 - self.buy_rsi)
+
     def reset(self):
         self.position = -1
+        self.buy_rsi = 0
         # self.feed.reset()
 
-btc_usd_file = '/Users/vkrot/workspace/dumps/binance/klines/BTCUSDT.csv'
 
 def build_env(config):
     worker_index = 1
     if hasattr(config, 'worker_index'):
         worker_index = config.worker_index
 
-    data = pd.read_csv(btc_usd_file, sep=';')
-    data['date'] = pd.to_datetime(data['time'], unit='ms')
+    raw_data = pd.read_csv(btc_usd_file, sep=';')
+    raw_data['date'] = pd.to_datetime(raw_data['time'], unit='ms')
+    data = compute_features(raw_data)
 
     features = []
-    for c in data.columns[1:]:
-        s = Stream.source(list(data[c]), dtype="float").rename(data[c].name)
-        features += [s]
-
-    # cp = Stream.select(features, lambda s: s.name == "close")
-    # features =[
-    #     cp
-    # ]
-
-    rsi_indicator = talib.RSI(data['close'], 14)
-    rsi_indicator = rsi_indicator / 100
-    rsi: Stream = Stream.source(rsi_indicator, "float").rename("rsi")
-    rsi_diff = rsi.diff().rename("rsi_diff")
-
-    features = [rsi, rsi_diff]
+    for c in data.columns:
+        if c not in raw_data.columns:
+            s = Stream.source(list(data[c]), dtype="float").rename(data[c].name)
+            features += [s]
 
     feed = DataFeed(features)
     feed.compile()
 
-    coinbase = Exchange("coinbase", service=execute_order)(
+    comm = 0.0001
+    coinbase = Exchange("coinbase", service=execute_order, options=ExchangeOptions(commission=comm))(
         Stream.source(list(data["close"]), dtype="float").rename("USD-BTC")
     )
 
@@ -179,8 +241,8 @@ def build_env(config):
     ])
 
     # reward_scheme = rewards.SimpleProfit()
-    reward_scheme = PBR(rsi=rsi, rsi_diff=rsi_diff)
-    # reward_scheme = SimpleProfit(window_size=25)
+    rsi = Stream.select(features, lambda x: x.name == "rsi")
+    reward_scheme = PBR(rsi=rsi, window_size=10)
     action_scheme = BSH(cash, asset)
     action_scheme.attach(reward_scheme)
 
@@ -221,13 +283,13 @@ register_env("TradingEnv", build_env)
 trainer_config = {
     "env": "TradingEnv",
     "env_config": {
-        "window_size": 25
+        "window_size": 40
     },
     "log_level": "DEBUG",
     "framework": "tf2",
     "ignore_worker_failures": True,
-    "num_workers": 3,
-    "num_gpus": 0,
+    "num_workers": num_workers,
+    "num_gpus": num_gpus,
     "clip_rewards": True,
     "lr": 8e-6,
     "lr_schedule": [
@@ -241,7 +303,7 @@ trainer_config = {
     ],
     "gamma": 0.9,
     "observation_filter": "MeanStdFilter",
-    "lambda": 0.72,
+    "lambda": 0.5,
     "vf_loss_coeff": 0.5,
     "entropy_coeff": 0.01,
     "logger_config": {
@@ -253,23 +315,23 @@ trainer_config = {
     }
 }
 
-analysis = tune.run(
-    "PPO",
-    stop={
-      "episode_reward_mean": 500
-    },
-    config=trainer_config,
-    loggers=DEFAULT_LOGGERS + (WandbLogger, ),
-    checkpoint_at_end=True
-)
-
-# debug code
-# ray.init(num_gpus=1, local_mode=True)
-# agent = PPOTrainer(
-#     env="TradingEnv",
-#     config=trainer_config
+# analysis = tune.run(
+#     "PPO",
+#     stop={
+#       "episode_reward_mean": 500
+#     },
+#     config=trainer_config,
+#     loggers=DEFAULT_LOGGERS + (WandbLogger, ),
+#     checkpoint_at_end=True
 # )
-# agent.train()
+
+## debug code
+ray.init(num_gpus=num_gpus, local_mode=True)
+agent = PPOTrainer(
+    env="TradingEnv",
+    config=trainer_config
+)
+agent.train()
 
 
 # compute final reward
