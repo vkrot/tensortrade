@@ -129,8 +129,9 @@ class TradingEnv(gym.Env, TimeIndexed):
         info = self.informer.info(self)
 
         self.clock.increment()
+        self.clock.increment2()
 
-        if (done or self.clock.step % 1000 == 0) and self.callback:
+        if (done or self.clock.num_steps % 1000 == 0) and self.callback:
             self.callback.on_done(self)
 
         return obs, reward, done, info
@@ -150,11 +151,21 @@ class TradingEnv(gym.Env, TimeIndexed):
             if hasattr(c, "reset"):
                 c.reset()
 
+        self.random_shift()
+
         obs = self.observer.observe(self)
 
         self.clock.increment()
 
         return obs
+
+    def random_shift(self):
+        import random
+        # TODO pass rand int
+        for i in range(random.randint(0, 2000)):
+            self.observer.observe(self)
+            self.clock.increment()
+
 
     def render(self, **kwargs) -> None:
         """Renders the environment."""

@@ -24,6 +24,7 @@ class Clock(object):
     def __init__(self):
         self.start = 0
         self.step = self.start
+        self.num_steps = 0
 
     def now(self, format: str = None) -> datetime:
         """Gets the current time in the provided format.
@@ -43,6 +44,11 @@ class Clock(object):
         """Increments the clock by specified time increment."""
         self.step += 1
 
+    def increment2(self) -> None:
+        """Increments the clock by specified time increment."""
+        self.num_steps += 1
+
     def reset(self) -> None:
         """Resets the clock."""
         self.step = self.start
+        self.num_steps = 0
