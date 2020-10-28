@@ -248,8 +248,6 @@ def build_env(config):
             s = Stream.source(list(data[c]), dtype="float").rename(data[c].name)
             features += [s]
 
-    feed = DataFeed(features)
-    feed.compile()
 
     comm = 0.00001
     coinbase = Exchange("coinbase", service=execute_order, options=ExchangeOptions(commission=comm))(
@@ -288,6 +286,16 @@ def build_env(config):
     class EpisodeStopper(Stopper):
         def stop(self, env: 'TradingEnv') -> bool:
             return env.clock.num_steps > 1000
+
+    open_position = Stream.sensor(
+        asset, lambda a: asset.total_balance.as_float() > 0
+    )
+    # open_position = Stream.sensor(
+    #     action_scheme, lambda action_scheme: action_scheme.has_asset
+    # )
+    features.append(open_position)
+    feed = DataFeed(features)
+    feed.compile()
 
     env = default.create(
         portfolio=portfolio,
@@ -354,23 +362,23 @@ trainer_config = {
     }
 }
 
-analysis = tune.run(
-    "PPO",
-    stop={
-      "episode_reward_mean": 500000
-    },
-    config=trainer_config,
-    loggers=DEFAULT_LOGGERS + (WandbLogger, ),
-    checkpoint_at_end=True
-)
+# analysis = tune.run(
+#     "PPO",
+#     stop={
+#       "episode_reward_mean": 500000
+#     },
+#     config=trainer_config,
+#     loggers=DEFAULT_LOGGERS + (WandbLogger, ),
+#     checkpoint_at_end=True
+# )
 
 ## debug code
-# ray.init(num_gpus=num_gpus, local_mode=True)
-# agent = PPOTrainer(
-#     env="TradingEnv",
-#     config=trainer_config
-# )
-# agent.train()
+ray.init(num_gpus=num_gpus, local_mode=True)
+agent = PPOTrainer(
+    env="TradingEnv",
+    config=trainer_config
+)
+agent.train()
 
 
 # compute final reward
